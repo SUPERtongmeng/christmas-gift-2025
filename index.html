@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Grand Luxury Tree - Adaptive Hand Gestures</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000000; font-family: 'Times New Roman', serif; }
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 1; }
+        
+        /* UI Overlay */
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 10; pointer-events: none;
+            display: flex; flex-direction: column; 
+            align-items: center;
+            padding-top: 40px;
+            box-sizing: border-box;
+            transition: opacity 0.5s ease;
+        }
+        
+        .ui-hidden {
+            opacity: 0 !important;
+            pointer-events: none !important;
+        }
+
+        /* Loading */
+        #loader {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: #000; z-index: 100;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            transition: opacity 0.8s ease-out;
+        }
+        .loader-text {
+            color: #74f9ff; font-size: 14px; letter-spacing: 4px; margin-top: 20px;
+            text-transform: uppercase; font-weight: 100;
+        }
+        .spinner {
+            width: 40px; height: 40px; border: 1px solid rgba(116, 249, 255, 0.2); 
+            border-top: 1px solid #74f9ff; border-radius: 50%; 
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Typography */
+        h1 { 
+            color: #74f9ff; font-size: 56px; margin: 0; font-weight: 400; 
+            letter-spacing: 6px; 
+            text-shadow: 0 0 50px rgba(116, 249, 255, 0.6); 
+            background: linear-gradient(to bottom, #e8ffe8, #74f9ff);
+            background-clip: text;
+            -webkit-background-clip: text;
+            color: transparent;
+            -webkit-text-fill-color: transparent;
+            font-family: 'Cinzel', 'Times New Roman', serif;
+            opacity: 0;
+            transition: opacity 2.0s ease;
+        }
+
+        /* Controls */
+        .controls-wrapper {
+            position: absolute; 
+            top: 30px;          
+            right: 30px;        
+            pointer-events: auto;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 10px;
+            z-index: 20;
+            transition: opacity 0.5s ease;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        .upload-btn {
+            background: rgba(20, 20, 20, 0.6); 
+            border: 1px solid rgba(212, 175, 55, 0.4); 
+            color: #d4af37; 
+            padding: 10px 20px; 
+            cursor: pointer; 
+            text-transform: uppercase; 
+            letter-spacing: 2px; 
+            font-size: 10px;
+            transition: all 0.4s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            backdrop-filter: blur(5px);
+            min-width: 120px;
+        }
+        .upload-btn:hover { 
+            background: #d4af37; 
+            color: #000; 
+            box-shadow: 0 0 20px rgba(212, 175, 55, 0.5);
+        }
+        
+        .hint-text {
+            color: rgba(212, 175, 55, 0.5);
+            font-size: 9px;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            text-align: right;
+            margin-top: 5px;
+        }
+
+        input[type="file"] { display: none; }
+
+        /* Webcam feedback */
+        #webcam-wrapper {
+            position: absolute; 
+            bottom: 30px;       
+            left: 30px;         
+            width: 280px;       
+            height: 210px;
+            border: 1px solid rgba(212, 175, 55, 0.5); 
+            box-shadow: 0 0 20px rgba(0,0,0,0.9);
+            border-radius: 4px;
+            overflow: hidden; 
+            opacity: 1;         
+            pointer-events: none;
+            z-index: 50;
+            background: #000;
+            transition: opacity 0.5s ease;
+            display: none;  /* 隐藏摄像头显示 */
+        }
+        
+        #webcam {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); 
+        }
+
+        /* Debug info for gestures */
+        #debug-info {
+            position: absolute;
+            bottom: 5px;
+            left: 5px;
+            color: rgba(212, 175, 55, 0.8);
+            font-size: 10px;
+            font-family: monospace;
+            background: rgba(0,0,0,0.5);
+            padding: 2px 5px;
+            pointer-events: none;
+        }
+    </style>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&display=swap');
+    </style>
+
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+                "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/+esm"
+            }
+        }
+    </script>
+</head>
+<body>
+    <!-- 雪花飘落Canvas -->
+    <canvas id="snow-canvas" style="position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:200;"></canvas>
+
+    <div id="loader">
+        <div class="spinner"></div>
+        <div class="loader-text">Loading Memories</div>
+    </div>
+
+    <div id="canvas-container"></div>
+
+    <div id="ui-layer">
+        <h1>Merry Christmas</h1>
+        
+        <!-- 上传功能已移除 -->
+    </div>
+
+    <div id="webcam-wrapper">
+        <video id="webcam" autoplay playsinline></video>
+        <div id="debug-info">Initializing...</div>
+        <canvas id="webcam-preview" style="display:none;"></canvas>
+    </div>
+
+    <script type="module">
+        // 雪花飘落动画
+        const snowCanvas = document.getElementById('snow-canvas');
+        const snowCtx = snowCanvas.getContext('2d');
+        let snowflakes = [];
+        function resizeSnowCanvas() {
+            snowCanvas.width = window.innerWidth;
+            snowCanvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeSnowCanvas);
+        resizeSnowCanvas();
+
+        function createSnowflake() {
+            return {
+                x: Math.random() * snowCanvas.width,
+                y: Math.random() * -snowCanvas.height,
+                r: 1.5 + Math.random() * 3.5,
+                d: 1 + Math.random() * 1.5,
+                alpha: 0.7 + Math.random() * 0.3,
+                drift: (Math.random() - 0.5) * 1.2
+            };
+        }
+        for (let i = 0; i < 80; i++) snowflakes.push(createSnowflake());
+
+        function drawSnowflakes() {
+            snowCtx.clearRect(0, 0, snowCanvas.width, snowCanvas.height);
+            snowCtx.save();
+            snowCtx.fillStyle = '#fff';
+            snowflakes.forEach(flake => {
+                snowCtx.globalAlpha = flake.alpha;
+                snowCtx.beginPath();
+                snowCtx.arc(flake.x, flake.y, flake.r, 0, 2 * Math.PI);
+                snowCtx.fill();
+            });
+            snowCtx.restore();
+        }
+
+        function updateSnowflakes() {
+            for (let flake of snowflakes) {
+                flake.y += flake.d;
+                flake.x += flake.drift;
+                if (flake.y > snowCanvas.height + 5 || flake.x < -10 || flake.x > snowCanvas.width + 10) {
+                    Object.assign(flake, createSnowflake());
+                    flake.y = -flake.r;
+                }
+            }
+        }
+
+        function snowLoop() {
+            updateSnowflakes();
+            drawSnowflakes();
+            requestAnimationFrame(snowLoop);
+        }
+        snowLoop();
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+        import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+        import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+        import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js'; 
+        import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision';
+
+        // --- 核心配置 ---
+        const CONFIG = {
+            colors: {
+                bg: 0x000000, 
+                champagneGold: 0x74f9ff, // #74f9ff 主色调
+                deepGreen: 0xa6fff2,     // #a6fff2 青绿色
+                accentRed: 0x00e0ff,     // #00e0ff 亮蓝色
+            },
+            particles: {
+                count: 1500,     
+                dustCount: 5000, 
+                treeHeight: 24,  
+                treeRadius: 8    
+            },
+            camera: { z: 50 },
+            
+            preload: {
+                autoScanLocal: false,
+                scanCount: 0,
+                images: [
+                    'C:\\Users\\m1778\\Desktop\\Mysterious folder\\shengdanjiejie\\IMG_0115.JPG',
+                    'IMG_0769.JPG',
+                    '00C18BBED7D34EB472476619154D2F9E.jpg',
+                    '2E61E2549AB4C8FD845E6ED141086A2E.jpg',
+                    '4B42F2EB1D4FC846E76EDA10CDE1B32B.jpg',
+                    '4E22D11F2BE37E7CA65E446A1D39D3A6.jpg',
+                    '5F844178C4CCB537217CA1FA70766BB2.jpg',
+                    '9C6D59B44A67A9BA929708B84745316C.jpg',
+                    'IMG_1928.jpeg',
+                    'IMG_0511.JPG',
+                    'IMG_1936.jpeg',
+                    'IMG_5611.JPG',
+                    'IMG_5696.JPG',
+                    'IMG_8675.JPG',
+                    'IMG_7468.JPG',
+                    '2971BCCBF174371D6C71EBA700C496F2.jpg',
+                    '45A59EB0F14E7359BF2F4147DBBB15B7.jpg'
+                ]
+            }
+        };
+
+        const STATE = {
+            mode: 'SCATTER', 
+            focusIndex: -1, 
+            focusTarget: null,
+            hand: { detected: false, x: 0, y: 0 },
+            rotation: { x: 0, y: 0 },
+            fanOffset: { x: 0, y: 0, z: 0 },
+            animationTime: 0,
+            currentDisplay: 'SKY' // SKY -> FALLING -> FAN -> TREE
+        };
+
+        let scene, camera, renderer, composer;
+        let mainGroup; 
+        let clock = new THREE.Clock();
+        let particleSystem = []; 
+        let letterMaterial; // 青色文字粒子材质
+        let fanTextPoints = []; // 中文"范濒元"点云
+        let fanCenterOffsetX = 0; // 以“濒”为中心的水平偏移
+        let christmasTextPoints = []; // "Merry Christmas"点云
+        let christmasCenterOffsetX = 0; // 以C为中心的水平偏移
+        let photoMeshGroup = new THREE.Group();
+        let handLandmarker, video;
+        let caneTexture; 
+        const debugInfo = document.getElementById('debug-info');
+
+        async function init() {
+            initThree();
+            setupEnvironment(); 
+            setupLights();
+            createTextures();
+            buildFanTextPoints();
+            buildChristmasTextPoints();
+            createParticles(); 
+            createDust();     
+            loadPredefinedImages();
+            setupPostProcessing();
+            setupEvents();
+            await initMediaPipe();
+            
+            const loader = document.getElementById('loader');
+            loader.style.opacity = 0;
+            setTimeout(() => loader.remove(), 800);
+
+            animate();
+        }
+
+        // --- 增强版图片加载系统 ---
+        function loadPredefinedImages() {
+            const loader = new THREE.TextureLoader();
+            CONFIG.preload.images.forEach(url => {
+                loader.load(url, 
+                    (t) => { t.colorSpace = THREE.SRGBColorSpace; addPhotoToScene(t); },
+                    undefined,
+                    (e) => { console.log(`Skipped: ${url}`); }
+                );
+            });
+
+            if (CONFIG.preload.autoScanLocal) {
+                for (let i = 1; i <= CONFIG.preload.scanCount; i++) {
+                    const pathJpg = `./images/(${i}).jpg`;
+                    const pathPng = `./images/(${i}).png`;
+                    loader.load(pathJpg, 
+                        (t) => { t.colorSpace = THREE.SRGBColorSpace; addPhotoToScene(t); },
+                        undefined,
+                        () => {
+                             loader.load(pathPng, 
+                                (t) => { t.colorSpace = THREE.SRGBColorSpace; addPhotoToScene(t); },
+                                undefined,
+                                () => {} 
+                             );
+                        }
+                    );
+                }
+            }
+        }
+
+        function initThree() {
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(CONFIG.colors.bg);
+            scene.fog = new THREE.FogExp2(CONFIG.colors.bg, 0.01); 
+
+            camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 2, CONFIG.camera.z); 
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.toneMapping = THREE.ReinhardToneMapping; 
+            renderer.toneMappingExposure = 2.2; 
+            container.appendChild(renderer.domElement);
+
+            mainGroup = new THREE.Group();
+            scene.add(mainGroup);
+        }
+
+        function setupEnvironment() {
+            const pmremGenerator = new THREE.PMREMGenerator(renderer);
+            scene.environment = pmremGenerator.fromScene(new RoomEnvironment(), 0.04).texture;
+        }
+
+        function setupLights() {
+            const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambient);
+
+            const innerLight = new THREE.PointLight(0x74f9ff, 2, 20); // 主色调内部光
+            innerLight.position.set(0, 5, 0);
+            mainGroup.add(innerLight);
+
+            const spotGold = new THREE.SpotLight(0xa6fff2, 1200); // 青绿色聚光灯
+            spotGold.position.set(30, 40, 40);
+            spotGold.angle = 0.5;
+            spotGold.penumbra = 0.5;
+            scene.add(spotGold);
+
+            const spotBlue = new THREE.SpotLight(0x00e0ff, 600); // 亮蓝色聚光灯
+            spotBlue.position.set(-30, 20, -30);
+            scene.add(spotBlue);
+            
+            const fill = new THREE.DirectionalLight(0xe8ffe8, 0.8); // 淡绿色填充光
+            fill.position.set(0, 0, 50);
+            scene.add(fill);
+        }
+
+        function setupPostProcessing() {
+            const renderScene = new RenderPass(scene, camera);
+            const bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+            bloomPass.threshold = 0.7; 
+            bloomPass.strength = 0.45; 
+            bloomPass.radius = 0.4;
+
+            composer = new EffectComposer(renderer);
+            composer.addPass(renderScene);
+            composer.addPass(bloomPass);
+        }
+
+        function createTextures() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 128; canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0,0,128,128);
+            ctx.fillStyle = '#74f9ff'; // 主色调条纹
+            ctx.beginPath();
+            for(let i=-128; i<256; i+=32) {
+                ctx.moveTo(i, 0); ctx.lineTo(i+32, 128); ctx.lineTo(i+16, 128); ctx.lineTo(i-16, 0);
+            }
+            ctx.fill();
+            caneTexture = new THREE.CanvasTexture(canvas);
+            caneTexture.wrapS = THREE.RepeatWrapping;
+            caneTexture.wrapT = THREE.RepeatWrapping;
+            caneTexture.repeat.set(3, 3);
+        }
+
+        // 生成 "FanBinYuan" 点云，并计算以“濒”为中心的偏移
+        function buildFanTextPoints() {
+            const opts = {
+                fontSize: 144,
+                spacing: 32,
+                scale: 0.0576,
+                sampleStep: 2,
+                useGeometryCenter: true // 使用几何中心动态居中
+            };
+            const res = generateTextPointsWithCenter('FanBinYuan', opts);
+            fanTextPoints = res.points;
+            fanCenterOffsetX = res.centerOffsetX || 0;
+        }
+
+        // 生成 "Merry Christmas" 点云
+        function buildChristmasTextPoints() {
+            const opts = {
+                fontSize: 100, 
+                spacing: 20,
+                scale: 0.056,
+                sampleStep: 3,
+                useGeometryCenter: true // 使用几何中心动态居中
+            };
+            const res = generateTextPointsWithCenter('Merry Christmas', opts);
+            christmasTextPoints = res.points;
+            christmasCenterOffsetX = res.centerOffsetX || 0;
+        }
+
+        // 从 canvas 采样文字像素，转为点云坐标
+        function generateTextPoints(text, { fontSize = 160, spacing = 30, scale = 0.1, sampleStep = 2 } = {}) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.font = `${fontSize}px sans-serif`;
+            const metrics = ctx.measureText(text);
+            const w = Math.ceil(metrics.width + spacing * (text.length - 1) + fontSize);
+            const h = Math.ceil(fontSize * 1.4);
+            canvas.width = w;
+            canvas.height = h;
+            ctx.font = `${fontSize}px sans-serif`;
+            ctx.fillStyle = '#00ffff';
+            ctx.textBaseline = 'top';
+            ctx.fillText(text, 0, 0);
+
+            const img = ctx.getImageData(0, 0, w, h).data;
+            const points = [];
+            for (let y = 0; y < h; y += sampleStep) {
+                for (let x = 0; x < w; x += sampleStep) {
+                    const idx = (y * w + x) * 4 + 3; // alpha channel
+                    if (img[idx] > 128) {
+                        const px = (x - w / 2) * scale;
+                        const py = (h / 2 - y) * scale;
+                        points.push({ x: px, y: py });
+                    }
+                }
+            }
+            return points;
+        }
+
+        // 生成点云并计算以指定字符为中心的水平偏移
+        function generateTextPointsWithCenter(text, { fontSize = 160, spacing = 30, scale = 0.1, sampleStep = 2, centerChar = 'B', useGeometryCenter = false } = {}) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            ctx.font = `${fontSize}px sans-serif`;
+
+            const wFull = Math.ceil(ctx.measureText(text).width + spacing * (text.length - 1) + fontSize);
+            const hFull = Math.ceil(fontSize * 1.4);
+            canvas.width = wFull;
+            canvas.height = hFull;
+            ctx.font = `${fontSize}px sans-serif`;
+            ctx.fillStyle = '#00ffff';
+            ctx.textBaseline = 'top';
+            ctx.fillText(text, 0, 0);
+
+            // 计算每个字符的起始x与宽度
+            const charMetrics = [];
+            let acc = 0;
+            for (let i = 0; i < text.length; i++) {
+                const ch = text[i];
+                const wCh = ctx.measureText(ch).width;
+                charMetrics.push({ start: acc, width: wCh });
+                acc += wCh + spacing;
+            }
+
+            // 采样像素生成点云
+            const img = ctx.getImageData(0, 0, wFull, hFull).data;
+            const points = [];
+            let minX = Infinity, maxX = -Infinity;
+
+            for (let y = 0; y < hFull; y += sampleStep) {
+                for (let x = 0; x < wFull; x += sampleStep) {
+                    const idx = (y * wFull + x) * 4 + 3;
+                    if (img[idx] > 128) {
+                        const px = (x - wFull / 2) * scale;
+                        const py = (hFull / 2 - y) * scale;
+                        points.push({ x: px, y: py });
+                        if (px < minX) minX = px;
+                        if (px > maxX) maxX = px;
+                    }
+                }
+            }
+
+            // 计算偏移
+            let centerOffsetX = 0;
+            if (useGeometryCenter && points.length > 0) {
+                const midX = (minX + maxX) / 2;
+                centerOffsetX = -midX; // 移动使得几何中心为0
+            } else {
+                // 找到中心字符的画布x坐标，并转换为点云坐标偏移
+                const idxBin = text.indexOf(centerChar);
+                if (idxBin !== -1) {
+                    const c = charMetrics[idxBin];
+                    const centerXCanvas = c.start + c.width / 2;
+                    centerOffsetX = ((wFull / 2) - centerXCanvas) * scale;
+                }
+            }
+
+            return { points, centerOffsetX };
+        }
+
+        class Particle {
+            constructor(mesh, type, isDust = false, isGround = false) {
+                this.mesh = mesh;
+                this.type = type;
+                this.isDust = isDust;
+                this.isGround = isGround;
+                this.originalMaterial = mesh.material;
+                this.displayType = 'NONE'; // 用于时间序列显示
+                
+                this.posTree = new THREE.Vector3();
+                this.posScatter = new THREE.Vector3();
+                this.posGround = new THREE.Vector3();
+                this.posFan = new THREE.Vector3();
+                this.posChristmas = new THREE.Vector3(); // Merry Christmas 位置
+                this.posSky = new THREE.Vector3(); // 屏幕外上方
+                this.posFalling = new THREE.Vector3(); // 下落中位置
+                this.baseScale = mesh.scale.x;
+                this.fallSpeed = 5 + Math.random() * 10; // 下落速度 
+
+                const speedMult = (type === 'PHOTO') ? 0.3 : 2.0;
+
+                this.spinSpeed = new THREE.Vector3(
+                    (Math.random() - 0.5) * speedMult,
+                    (Math.random() - 0.5) * speedMult,
+                    (Math.random() - 0.5) * speedMult
+                );
+
+                this.calculatePositions();
+            }
+
+            calculatePositions() {
+                
+                if (this.type === 'PHOTO') {
+                    this.posTree.set(0, 0, 0); 
+                    const rScatter = 8 + Math.random()*12;
+                    const theta = Math.random() * Math.PI * 2;
+                    const phi = Math.acos(2 * Math.random() - 1);
+                    this.posScatter.set(
+                        rScatter * Math.sin(phi) * Math.cos(theta),
+                        rScatter * Math.sin(phi) * Math.sin(theta),
+                        rScatter * Math.cos(phi)
+                    );
+                    return;
+                }
+
+                const h = CONFIG.particles.treeHeight;
+                const halfH = h / 2;
+                let t = Math.random(); 
+                t = Math.pow(t, 0.8); 
+                const y = (t * h) - halfH;
+                
+                let rMax = CONFIG.particles.treeRadius * (1.0 - t); 
+                if (rMax < 0.5) rMax = 0.5;
+
+                const angle = t * 50 * Math.PI + Math.random() * Math.PI; 
+                const r = rMax * (0.8 + Math.random() * 0.4); 
+                this.posTree.set(Math.cos(angle) * r, y, Math.sin(angle) * r);
+
+                let rScatter = this.isDust ? (12 + Math.random()*20) : (8 + Math.random()*12);
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+                this.posScatter.set(
+                    rScatter * Math.sin(phi) * Math.cos(theta),
+                    rScatter * Math.sin(phi) * Math.sin(theta),
+                    rScatter * Math.cos(phi)
+                );
+                
+                // 为地面粒子计算波浪起伏的地面位置
+                if (this.isGround) {
+                    const groundRadius = 60;
+                    const gx = (Math.random() - 0.5) * groundRadius * 2;
+                    const gz = (Math.random() - 0.5) * groundRadius * 2;
+                    const dist = Math.sqrt(gx*gx + gz*gz);
+                    
+                    // 创建波浪效果
+                    const wave1 = Math.sin(gx * 0.1) * 1.5;
+                    const wave2 = Math.cos(gz * 0.1) * 1.5;
+                    const radialWave = Math.sin(dist * 0.15) * 2;
+                    const gy = -CONFIG.particles.treeHeight/2 - 2.5 + wave1 + wave2 + radialWave;
+                    
+                    this.posGround.set(gx, gy, gz);
+                }
+                
+                // 计算Fan字母的3D位置
+                this.calculateFanPosition();
+                this.calculateChristmasPosition();
+                
+                // 计算屏幕外初始位置（上方）
+                const skyX = (Math.random() - 0.5) * 60;
+                const skyY = 30 + Math.random() * 20;
+                const skyZ = (Math.random() - 0.5) * 60;
+                this.posSky.set(skyX, skyY, skyZ);
+                this.posFalling.copy(this.posSky);
+            }
+            
+            calculateFanPosition() {
+                // 使用预生成的 "FanBinYuan" 点云
+                let x = 0, y = 0, z = 0;
+                const randZ = (Math.random() - 0.5) * 1.5;
+
+                if (fanTextPoints.length > 0) {
+                    const idx = Math.floor(Math.random() * fanTextPoints.length);
+                    x = fanTextPoints[idx].x;
+                    y = fanTextPoints[idx].y;
+                }
+
+                // 添加随机散布效果，使边缘不那么锋利
+                // 基础微小抖动
+                x += (Math.random() - 0.5) * 0.4;
+                y += (Math.random() - 0.5) * 0.4;
+                
+                // 少量粒子大幅度偏离 (约8%概率)，营造飘逸感
+                if (Math.random() < 0.08) {
+                     x += (Math.random() - 0.5) * 3.0;
+                     y += (Math.random() - 0.5) * 3.0;
+                     z += (Math.random() - 0.5) * 2.0; // 稍微有些深度变化
+                }
+
+                // 应用以“濒”为中心的水平偏移
+                x += fanCenterOffsetX;
+                if (z === 0) z = 0; // 如果没有被随机偏移修改
+                this.posFan.set(x, y, z);
+            }
+
+            calculateChristmasPosition() {
+                // 使用预生成的 "Merry Christmas" 点云
+                let x = 0, y = 0, z = 0;
+                
+                if (christmasTextPoints.length > 0) {
+                    const idx = Math.floor(Math.random() * christmasTextPoints.length);
+                    x = christmasTextPoints[idx].x;
+                    y = christmasTextPoints[idx].y;
+                }
+
+                // 添加随机散布效果
+                x += (Math.random() - 0.5) * 0.4;
+                y += (Math.random() - 0.5) * 0.4;
+                
+                // 少量粒子大幅度偏离
+                if (Math.random() < 0.08) {
+                     x += (Math.random() - 0.5) * 3.0;
+                     y += (Math.random() - 0.5) * 3.0;
+                     z += (Math.random() - 0.5) * 2.0;
+                }
+
+                // 应用以'C'为中心的水平偏移
+                x += christmasCenterOffsetX;
+                if (z === 0) z = 0;
+                this.posChristmas.set(x, y, z);
+            }
+            
+            
+            update(dt, mode, focusTargetMesh) {
+                let target = this.posTree;
+                
+                // 根据displayType选择目标位置
+                if (STATE.currentDisplay === 'SKY') {
+                    target = this.posSky;
+                } else if (STATE.currentDisplay === 'FALLING') {
+                    // 雪花下落动画
+                    this.posFalling.y -= this.fallSpeed * dt;
+                    // 水平漂移
+                    this.posFalling.x += Math.sin(STATE.animationTime * 2 + this.mesh.id) * 0.5 * dt;
+                    this.posFalling.z += Math.cos(STATE.animationTime * 2 + this.mesh.id) * 0.5 * dt;
+                    target = this.posFalling;
+                } else if (STATE.currentDisplay === 'SCATTER') {
+                    target = this.posScatter;
+                } else if (STATE.currentDisplay === 'FAN') {
+                    if (!this.displayType || this.displayType === 'FAN' || this.displayType === 'NONE') {
+                        this.displayType = 'FAN';
+                        target = this.posFan;
+                    } else {
+                        target = this.posScatter;
+                    }
+                } else if (STATE.currentDisplay === 'CHRISTMAS') {
+                    if (!this.displayType || this.displayType === 'FAN' || this.displayType === 'NONE') {
+                        target = this.posChristmas;
+                    } else {
+                        target = this.posScatter;
+                    }
+                } else if (STATE.currentDisplay === 'TREE') {
+                    if (this.isGround) {
+                        target = this.posGround;
+                    } else if (this.type === 'PHOTO') {
+                        target = this.posTree;
+                    } else {
+                        target = this.posTree;
+                    }
+                } else if (mode === 'SCATTER') {
+                    target = this.posScatter;
+                } else if (mode === 'FOCUS') {
+                    if (this.mesh === focusTargetMesh) {
+                        // 动态居中：移动到相机正前方 (z=40, 相机在z=50)
+                        const desiredWorldPos = new THREE.Vector3(0, 0, 40);
+                        const invMatrix = new THREE.Matrix4().copy(mainGroup.matrixWorld).invert();
+                        target = desiredWorldPos.applyMatrix4(invMatrix);
+                        
+                        // 确保渲染在最上层
+                        this.mesh.renderOrder = 9999;
+                        this.mesh.traverse((child) => {
+                            if (child.isMesh) {
+                                child.renderOrder = 9999;
+                                if (child.material) child.material.depthTest = false;
+                            }
+                        });
+                    } else {
+                        target = this.posScatter;
+                        this.mesh.renderOrder = 0;
+                        this.mesh.traverse((child) => {
+                            if (child.isMesh) {
+                                child.renderOrder = 0;
+                                if (child.material) child.material.depthTest = true;
+                            }
+                        });
+                    }
+                }
+
+                const lerpSpeed = (mode === 'FOCUS' && this.mesh === focusTargetMesh) ? 8.0 : 4.0; 
+                this.mesh.position.lerp(target, lerpSpeed * dt);
+
+                if (STATE.currentDisplay === 'SKY' || STATE.currentDisplay === 'FALLING') {
+                    // 下落时缓慢旋转
+                    this.mesh.rotation.x += this.spinSpeed.x * dt * 0.5;
+                    this.mesh.rotation.y += this.spinSpeed.y * dt * 0.5;
+                    this.mesh.rotation.z += this.spinSpeed.z * dt * 0.5;
+                } else if (STATE.currentDisplay === 'SCATTER') {
+                    this.mesh.rotation.x += this.spinSpeed.x * dt;
+                    this.mesh.rotation.y += this.spinSpeed.y * dt;
+                    this.mesh.rotation.z += this.spinSpeed.z * dt; 
+                } else if (STATE.currentDisplay === 'FAN') {
+                    // FAN模式关闭自动旋转
+                    this.mesh.rotation.y += 0 * dt;
+                    this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, 0, dt);
+                    this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, 0, dt);
+                } else if (STATE.currentDisplay === 'CHRISTMAS') {
+                    // CHRISTMAS模式关闭自动旋转
+                    this.mesh.rotation.y += 0 * dt;
+                    this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, 0, dt);
+                    this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, 0, dt);
+                } else if (STATE.currentDisplay === 'TREE') {
+                    if (this.type === 'PHOTO') {
+                        this.mesh.lookAt(0, this.mesh.position.y, 0);
+                        this.mesh.rotateY(Math.PI);
+                    } else {
+                        this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, 0, dt);
+                        this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, 0, dt);
+                        this.mesh.rotation.y += 0.5 * dt; 
+                    }
+                } else if (mode === 'SCATTER') {
+                    if (this.type === 'PHOTO') {
+                        this.mesh.lookAt(0, this.mesh.position.y, 0);
+                        this.mesh.rotateY(Math.PI);
+                    } else {
+                        this.mesh.rotation.x = THREE.MathUtils.lerp(this.mesh.rotation.x, 0, dt);
+                        this.mesh.rotation.z = THREE.MathUtils.lerp(this.mesh.rotation.z, 0, dt);
+                        this.mesh.rotation.y += 0.5 * dt; 
+                    }
+                }
+                
+                if (mode === 'FOCUS' && this.mesh === focusTargetMesh) {
+                    this.mesh.lookAt(camera.position); 
+                }
+
+                // FAN/CHRISTMAS 模式使用统一的青色半透明材质，其他模式恢复原材质
+                if (STATE.currentDisplay === 'FAN' || STATE.currentDisplay === 'CHRISTMAS') {
+                    if (this.mesh.material !== letterMaterial) this.mesh.material = letterMaterial;
+                } else if (this.mesh.material !== this.originalMaterial) {
+                    this.mesh.material = this.originalMaterial;
+                }
+
+                let s = this.baseScale;
+                
+                // Photo visibility logic
+                if (this.type === 'PHOTO') {
+                    if (STATE.currentDisplay === 'TREE' || mode === 'FOCUS') {
+                        // Visible
+                    } else {
+                        s = 0;
+                    }
+                }
+
+                if (this.isDust) {
+                    s = this.baseScale * (0.8 + 0.4 * Math.sin(clock.elapsedTime * 4 + this.mesh.id));
+                    if (STATE.currentDisplay === 'TREE' && !this.isGround) s = 0;
+                    else if (this.isGround && STATE.currentDisplay === 'TREE') s = this.baseScale * 1.2;
+                    else if (STATE.currentDisplay === 'FAN' || STATE.currentDisplay === 'CHRISTMAS') s = this.baseScale * 0.8;
+                    else if (STATE.currentDisplay === 'SKY' || STATE.currentDisplay === 'FALLING') s = this.baseScale;
+                } else if (STATE.currentDisplay === 'SKY' || STATE.currentDisplay === 'FALLING') {
+                    s = this.baseScale;
+                } else if (STATE.currentDisplay === 'FAN' || STATE.currentDisplay === 'CHRISTMAS') {
+                    s = 0.25; // 文字粒子固定大小 (比FAN略小或相同)
+                } else if (mode === 'SCATTER' && this.type === 'PHOTO') {
+                    s = this.baseScale * 2.5; 
+                } else if (mode === 'FOCUS') {
+                    if (this.mesh === focusTargetMesh) s = 15.0; // 放大
+                    else s = 0; // 隐藏其他
+                }
+                
+                this.mesh.scale.lerp(new THREE.Vector3(s,s,s), 6*dt);
+            }
+        }
+
+        function updatePhotoLayout() {
+            const photos = particleSystem.filter(p => p.type === 'PHOTO');
+            const count = photos.length;
+            if (count === 0) return;
+
+            const h = CONFIG.particles.treeHeight * 0.9;
+            const bottomY = -h/2;
+            const stepY = h / count;
+            const loops = 3;
+
+            photos.forEach((p, i) => {
+                const y = bottomY + stepY * i + stepY/2;
+                const fullH = CONFIG.particles.treeHeight;
+                const normalizedH = (y + fullH/2) / fullH; 
+
+                let rMax = CONFIG.particles.treeRadius * (1.0 - normalizedH);
+                if (rMax < 1.0) rMax = 1.0;
+                
+                const r = rMax + 3.0; 
+                const angle = normalizedH * Math.PI * 2 * loops + (Math.PI/4); 
+
+                p.posTree.set(Math.cos(angle) * r, y, Math.sin(angle) * r);
+            });
+        }
+
+        function createParticles() {
+            const sphereGeo = new THREE.SphereGeometry(0.5, 32, 32); 
+            const boxGeo = new THREE.BoxGeometry(0.55, 0.55, 0.55); 
+            const curve = new THREE.CatmullRomCurve3([
+                new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, 0.3, 0),
+                new THREE.Vector3(0.1, 0.5, 0), new THREE.Vector3(0.3, 0.4, 0)
+            ]);
+            const candyGeo = new THREE.TubeGeometry(curve, 16, 0.08, 8, false);
+
+            const goldMat = new THREE.MeshStandardMaterial({
+                color: 0x74f9ff, // 主色调
+                metalness: 1.0, roughness: 0.1,
+                envMapIntensity: 2.0, 
+                emissive: 0x00a0cc,   // 青色自发光
+                emissiveIntensity: 0.3
+            });
+
+            const greenMat = new THREE.MeshStandardMaterial({
+                color: 0xa6fff2, // 青绿色
+                metalness: 0.2, roughness: 0.8,
+                emissive: 0x00ccaa, // 青绿色自发光
+                emissiveIntensity: 0.2 
+            });
+
+            const redMat = new THREE.MeshPhysicalMaterial({
+                color: 0x00e0ff, // 亮蓝色
+                metalness: 0.3, roughness: 0.2, clearcoat: 1.0,
+                emissive: 0x00a0dd // 青蓝色自发光
+            });
+            
+            const candyMat = new THREE.MeshStandardMaterial({ map: caneTexture, roughness: 0.4 });
+
+            // FanBinYuan 文字专用材质：青色、半透明
+            letterMaterial = new THREE.MeshBasicMaterial({
+                color: 0x00ffff,
+                transparent: true,
+                opacity: 0.9,
+                depthWrite: false
+            });
+
+            for (let i = 0; i < CONFIG.particles.count; i++) {
+                const rand = Math.random();
+                let mesh, type;
+                
+                if (rand < 0.40) {
+                    mesh = new THREE.Mesh(boxGeo, greenMat);
+                    type = 'BOX';
+                } else if (rand < 0.70) {
+                    mesh = new THREE.Mesh(boxGeo, goldMat);
+                    type = 'GOLD_BOX';
+                } else if (rand < 0.92) {
+                    mesh = new THREE.Mesh(sphereGeo, goldMat);
+                    type = 'GOLD_SPHERE';
+                } else if (rand < 0.97) {
+                    mesh = new THREE.Mesh(sphereGeo, redMat);
+                    type = 'RED';
+                } else {
+                    mesh = new THREE.Mesh(candyGeo, candyMat);
+                    type = 'CANE';
+                }
+
+                const s = 0.4 + Math.random() * 0.5;
+                mesh.scale.set(s,s,s);
+                mesh.rotation.set(Math.random()*6, Math.random()*6, Math.random()*6);
+                
+                mainGroup.add(mesh);
+                particleSystem.push(new Particle(mesh, type, false));
+            }
+
+            // Star
+            const starShape = new THREE.Shape();
+            const points = 5;
+            const outerRadius = 1.5;
+            const innerRadius = 0.7; 
+            
+            for (let i = 0; i < points * 2; i++) {
+                const angle = (i * Math.PI) / points + Math.PI / 2;
+                const r = (i % 2 === 0) ? outerRadius : innerRadius;
+                const x = Math.cos(angle) * r;
+                const y = Math.sin(angle) * r;
+                if (i === 0) starShape.moveTo(x, y);
+                else starShape.lineTo(x, y);
+            }
+            starShape.closePath();
+
+            const starGeo = new THREE.ExtrudeGeometry(starShape, {
+                depth: 0.4,
+                bevelEnabled: true,
+                bevelThickness: 0.1,
+                bevelSize: 0.1,
+                bevelSegments: 2
+            });
+            starGeo.center(); 
+
+            const starMat = new THREE.MeshStandardMaterial({
+                color: 0xe8ffe8, emissive: 0x74f9ff, emissiveIntensity: 1.0, // 淡绿色星星，青色发光
+                metalness: 1.0, roughness: 0
+            });
+            const star = new THREE.Mesh(starGeo, starMat);
+            star.position.set(0, CONFIG.particles.treeHeight/2 + 1.2, 0);
+            mainGroup.add(star);
+            
+            mainGroup.add(photoMeshGroup);
+        }
+
+        function createDust() {
+            const geo = new THREE.TetrahedronGeometry(0.08, 0);
+            const mat = new THREE.MeshBasicMaterial({ color: 0xa6fff2, transparent: true, opacity: 0.8 }); // 青绿色尘埃
+            
+            const groundCount = 3500; // 地面粒子数量 (增加密度)
+            
+            for(let i=0; i<CONFIG.particles.dustCount; i++) {
+                 const mesh = new THREE.Mesh(geo, mat);
+                 mesh.scale.setScalar(0.5 + Math.random());
+                 mainGroup.add(mesh);
+                 const isGround = i < groundCount; // 前800个作为地面粒子
+                 particleSystem.push(new Particle(mesh, 'DUST', true, isGround));
+            }
+        }
+
+        function addPhotoToScene(texture) {
+            const frameGeo = new THREE.BoxGeometry(1.4, 1.4, 0.05);
+            const frameMat = new THREE.MeshStandardMaterial({ color: CONFIG.colors.champagneGold, metalness: 1.0, roughness: 0.1 });
+            const frame = new THREE.Mesh(frameGeo, frameMat);
+
+            let width = 1.2;
+            let height = 1.2;
+            
+            if (texture.image) {
+                const aspect = texture.image.width / texture.image.height;
+                if (aspect > 1) {
+                    height = width / aspect;
+                } else {
+                    width = height * aspect;
+                }
+            }
+
+            const photoGeo = new THREE.PlaneGeometry(width, height);
+            const photoMat = new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+            const photo = new THREE.Mesh(photoGeo, photoMat);
+            photo.position.z = 0.04;
+
+            const group = new THREE.Group();
+            group.add(frame);
+            group.add(photo);
+            
+            frame.scale.set(width/1.2, height/1.2, 1);
+
+            const s = 0.8;
+            group.scale.set(s,s,s);
+            
+            photoMeshGroup.add(group);
+            particleSystem.push(new Particle(group, 'PHOTO', false));
+
+            updatePhotoLayout();
+        }
+        
+        function handleImageUpload(e) {
+            const files = e.target.files;
+            if(!files.length) return;
+            
+            Array.from(files).forEach(f => {
+                if (!f.type.startsWith('image/')) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    new THREE.TextureLoader().load(ev.target.result, (t) => {
+                        t.colorSpace = THREE.SRGBColorSpace;
+                        addPhotoToScene(t);
+                    });
+                }
+                reader.readAsDataURL(f);
+            });
+        }
+
+        // --- MEDIAPIPE (Adaptive Fix) ---
+        async function initMediaPipe() {
+            video = document.getElementById('webcam');
+            
+            // Adjust to get best available resolution if possible
+            const constraints = {
+                video: {
+                    width: { ideal: 640 },
+                    height: { ideal: 480 },
+                    frameRate: { ideal: 30 }
+                }
+            };
+
+            const vision = await FilesetResolver.forVisionTasks(
+                "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+            );
+            handLandmarker = await HandLandmarker.createFromOptions(vision, {
+                baseOptions: {
+                    modelAssetPath: `https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task`,
+                    delegate: "GPU"
+                },
+                runningMode: "VIDEO",
+                numHands: 1
+            });
+            
+            if (navigator.mediaDevices?.getUserMedia) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    video.srcObject = stream;
+                    video.addEventListener("loadeddata", predictWebcam);
+                    debugInfo.innerText = "Webcam active. Show hand.";
+                } catch(e) {
+                    console.warn("Webcam access denied or not available", e);
+                    debugInfo.innerText = "Camera error: " + e.message;
+                    document.getElementById('webcam-wrapper').style.display = 'none';
+                }
+            }
+        }
+
+        let lastVideoTime = -1;
+        async function predictWebcam() {
+            if (video.currentTime !== lastVideoTime) {
+                lastVideoTime = video.currentTime;
+                if (handLandmarker) {
+                    const result = handLandmarker.detectForVideo(video, performance.now());
+                    processGestures(result);
+                }
+            }
+            requestAnimationFrame(predictWebcam);
+        }
+
+        // 修复核心：使用相对比例而非绝对距离
+        function processGestures(result) {
+            if (result.landmarks && result.landmarks.length > 0) {
+                STATE.hand.detected = true;
+                const lm = result.landmarks[0];
+                STATE.hand.x = (lm[9].x - 0.5) * -2; // 反转X坐标，修复镜像问题
+                STATE.hand.y = (lm[9].y - 0.5) * 2;
+
+                const thumb = lm[4]; 
+                const index = lm[8]; 
+                const middle = lm[12]; // 中指尖
+                const ring = lm[16];   // 无名指尖
+                const pinky = lm[20];  // 小指尖
+                const wrist = lm[0];
+                const middleMCP = lm[9]; // 中指指根 (Knuckle)
+
+                // 1. 计算手掌基准大小 (手腕到中指指根的距离)
+                const handSize = Math.hypot(middleMCP.x - wrist.x, middleMCP.y - wrist.y);
+                if (handSize < 0.02) return;
+
+                // 2. 计算手指尖端的平均伸展距离
+                const tips = [lm[8], lm[12], lm[16], lm[20]];
+                let avgTipDist = 0;
+                tips.forEach(t => avgTipDist += Math.hypot(t.x - wrist.x, t.y - wrist.y));
+                avgTipDist /= 4;
+
+                // 3. 计算捏合距离 (拇指到食指)
+                const pinchDist = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+
+                // 4. 计算相对比例
+                const extensionRatio = avgTipDist / handSize;
+                const pinchRatio = pinchDist / handSize;
+                
+                // 5. 比耶手势检测 (✌️)
+                const indexDist = Math.hypot(index.x - wrist.x, index.y - wrist.y);
+                const middleDist = Math.hypot(middle.x - wrist.x, middle.y - wrist.y);
+                const ringDist = Math.hypot(ring.x - wrist.x, ring.y - wrist.y);
+                const pinkyDist = Math.hypot(pinky.x - wrist.x, pinky.y - wrist.y);
+                
+                const indexExtended = indexDist / handSize > 1.6;
+                const middleExtended = middleDist / handSize > 1.6;
+                const ringClosed = ringDist / handSize < 1.3;
+                const pinkyClosed = pinkyDist / handSize < 1.2;
+                
+                const isPeaceSign = indexExtended && middleExtended && ringClosed && pinkyClosed;
+
+                // 6. 状态判定优化
+                if (extensionRatio < 1.5) {
+                    // 握拳：变成树 (阈值从 1.4 提高到 1.5，更容易触发)
+                    STATE.mode = 'TREE';
+                    STATE.currentDisplay = 'TREE';
+                    STATE.focusTarget = null;
+                } else if (pinchRatio < 0.35) {
+                    // 捏合：进入聚焦模式 (仅当没有握拳时才检查)
+                    if (STATE.mode !== 'FOCUS') {
+                        STATE.mode = 'FOCUS';
+                        STATE.currentDisplay = 'SCATTER';
+                        const photos = particleSystem.filter(p => p.type === 'PHOTO');
+                        if (photos.length) STATE.focusTarget = photos[Math.floor(Math.random()*photos.length)].mesh;
+                    }
+                } else if (extensionRatio > 1.7) {
+                    // 张开：散开照片
+                    STATE.mode = 'SCATTER';
+                    STATE.currentDisplay = 'SCATTER';
+                    STATE.focusTarget = null;
+                }
+            } else {
+                STATE.hand.detected = false;
+                debugInfo.innerText = "No hand detected";
+            }
+        }
+
+        function setupEvents() {
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+                composer.setSize(window.innerWidth, window.innerHeight);
+            });
+            
+            // 上传功能已移除
+            // document.getElementById('file-input').addEventListener('change', handleImageUpload);
+            // document.getElementById('folder-input').addEventListener('change', handleImageUpload);
+            
+            window.addEventListener('keydown', (e) => {
+                if (e.key.toLowerCase() === 'h') {
+                    const controls = document.querySelector('.controls-wrapper');
+                    if (controls) controls.classList.toggle('ui-hidden');
+                    const webcam = document.getElementById('webcam-wrapper');
+                    if(webcam) webcam.classList.toggle('ui-hidden');
+                }
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = clock.getDelta();
+            
+            // 时间序列动画逻辑
+            if (STATE.animationTime < 16) {
+                STATE.animationTime += dt;
+                if (STATE.animationTime < 2) {
+                    STATE.currentDisplay = 'SKY';
+                } else if (STATE.animationTime < 8) {
+                    STATE.currentDisplay = 'FALLING';
+                } else if (STATE.animationTime < 12) {
+                    STATE.currentDisplay = 'FAN';
+                } else if (STATE.animationTime < 16) {
+                    STATE.currentDisplay = 'CHRISTMAS';
+                }
+            } else {
+                // 16秒后，按照mode显示（支持手势交互）
+                if (STATE.mode === 'TREE') {
+                    STATE.currentDisplay = 'TREE';
+                } else if (STATE.mode === 'SCATTER') {
+                    STATE.currentDisplay = 'SCATTER';
+                } else if (STATE.mode === 'FOCUS') {
+                    STATE.currentDisplay = 'SCATTER';
+                } else {
+                    STATE.currentDisplay = 'TREE'; // 默认显示TREE
+                }
+            }
+
+            // Rotation Logic
+            if (STATE.animationTime >= 16 && STATE.hand.detected) {
+                // 动画结束后，使用手势控制旋转
+                const targetRotY = STATE.hand.x * 2.0;
+                const targetRotX = STATE.hand.y * 2.0;
+                STATE.rotation.y += (targetRotY - STATE.rotation.y) * 3.0 * dt;
+                STATE.rotation.x += (targetRotX - STATE.rotation.x) * 3.0 * dt;
+            } else if (STATE.currentDisplay === 'SKY' || STATE.currentDisplay === 'FALLING') {
+                STATE.rotation.y += 0.1 * dt;
+                STATE.rotation.x += (0 - STATE.rotation.x) * 0.5 * dt;
+            } else if (STATE.currentDisplay === 'TREE') {
+                STATE.rotation.y += 0.3 * dt;
+                STATE.rotation.x += (0 - STATE.rotation.x) * 2.0 * dt;
+            } else if (STATE.currentDisplay === 'SCATTER') {
+                STATE.rotation.y += 0.2 * dt;
+                STATE.rotation.x += (0 - STATE.rotation.x) * 1.0 * dt;
+            } else if (STATE.currentDisplay === 'FAN' || STATE.currentDisplay === 'CHRISTMAS') {
+                // FAN/CHRISTMAS模式关闭自动旋转，保持静止
+                STATE.rotation.y += (0 - STATE.rotation.y) * 1.0 * dt;
+                STATE.rotation.x += (0 - STATE.rotation.x) * 1.0 * dt;
+            }
+
+            mainGroup.rotation.y = STATE.rotation.y;
+            mainGroup.rotation.x = STATE.rotation.x;
+
+            // Title visibility logic
+            const title = document.querySelector('h1');
+            if (title) {
+                if (STATE.currentDisplay === 'TREE') {
+                    title.style.opacity = '0.9';
+                } else {
+                    title.style.opacity = '0';
+                }
+            }
+
+            particleSystem.forEach(p => p.update(dt, STATE.mode, STATE.focusTarget));
+            composer.render();
+        }
+
+        init();
+    </script>
+</body>
+</html>
