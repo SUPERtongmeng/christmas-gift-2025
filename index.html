@@ -186,6 +186,9 @@
         <canvas id="webcam-preview" style="display:none;"></canvas>
     </div>
 
+    <!-- Background Music -->
+    <audio id="bgm" src="./Last Christmas.m4a" loop preload="auto"></audio>
+
     <script type="module">
         // 雪花飘落动画
         const snowCanvas = document.getElementById('snow-canvas');
@@ -331,6 +334,16 @@
             const loader = document.getElementById('loader');
             loader.style.opacity = 0;
             setTimeout(() => loader.remove(), 800);
+
+            // Auto-play music
+            const bgm = document.getElementById('bgm');
+            bgm.volume = 0.5;
+            bgm.play().catch(() => {
+                console.log('Autoplay blocked. Waiting for interaction.');
+                document.addEventListener('click', () => {
+                    bgm.play();
+                }, { once: true });
+            });
 
             animate();
         }
